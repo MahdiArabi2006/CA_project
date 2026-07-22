@@ -124,7 +124,11 @@ func (ds *directoryStage) doRead(transIdx int, trans *transactionState) bool {
 	mshrIdx, found := cache.MSHRQuery(
 		&next.MSHRState, trans.ReadPID, cachelineID)
 	if found {
-		return ds.handleReadMSHRHit(transIdx, trans, mshrIdx)
+		ok := ds.handleReadMSHRHit(transIdx, trans, mshrIdx)
+		if ok {
+			ds.cache.comp.State.StatMissCount += 1
+		}
+		return ok
 	}
 
 	setID, wayID, blockFound := cache.DirectoryLookup(
@@ -132,10 +136,19 @@ func (ds *directoryStage) doRead(transIdx int, trans *transactionState) bool {
 		spec.NumSets, 1<<spec.Log2BlockSize,
 		trans.ReadPID, cachelineID)
 	if blockFound {
-		return ds.handleReadHit(transIdx, trans, setID, wayID)
+		ok := ds.handleReadHit(transIdx, trans, setID, wayID)
+		if ok {
+			ds.cache.comp.State.StatHitCount += 1
+		}
+		return ok
 	}
 
-	return ds.handleReadMiss(transIdx, trans)
+	ok := ds.handleReadMiss(transIdx, trans)
+	if ok {
+		ds.cache.comp.State.StatMissCount += 1
+		ds.cache.comp.State.StatL2ReadTraffic += (1 << spec.Log2BlockSize)
+	}
+	return ok
 }
 
 func (ds *directoryStage) handleReadMSHRHit(
@@ -233,6 +246,7 @@ func (ds *directoryStage) doWrite(transIdx int, trans *transactionState) bool {
 	if found {
 		ok := ds.doWriteMSHRHit(transIdx, trans, mshrIdx)
 		if ok {
+			ds.cache.comp.State.StatMissCount += 1
 			tracing.AddTaskTag(ds.cache.comp, tracing.TaskTag{
 				TaskID: tracing.MsgIDAtReceiver(&trans.WriteMeta, ds.cache.comp),
 				What:   "write-mshr-hit",
@@ -249,6 +263,7 @@ func (ds *directoryStage) doWrite(transIdx int, trans *transactionState) bool {
 	if blockFound {
 		ok := ds.doWriteHit(transIdx, trans, setID, wayID)
 		if ok {
+			ds.cache.comp.State.StatHitCount += 1
 			tracing.AddTaskTag(ds.cache.comp, tracing.TaskTag{
 				TaskID: tracing.MsgIDAtReceiver(&trans.WriteMeta, ds.cache.comp),
 				What:   "write-hit",
@@ -260,6 +275,8 @@ func (ds *directoryStage) doWrite(transIdx int, trans *transactionState) bool {
 
 	ok := ds.doWriteMiss(transIdx, trans)
 	if ok {
+		ds.cache.comp.State.StatMissCount += 1
+		ds.cache.comp.State.StatL2ReadTraffic += (1 << spec.Log2BlockSize)
 		tracing.AddTaskTag(ds.cache.comp, tracing.TaskTag{
 			TaskID: tracing.MsgIDAtReceiver(&trans.WriteMeta, ds.cache.comp),
 			What:   "write-miss",
@@ -501,6 +518,7 @@ func (ds *directoryStage) updateTransForEviction(
 	if victim.DirtyMask != nil {
 		trans.VictimDirtyMask = make([]bool, len(victim.DirtyMask))
 		copy(trans.VictimDirtyMask, victim.DirtyMask)
+		ds.cache.comp.State.StatL2WriteTraffic += (1 << spec.Log2BlockSize)
 	}
 
 	trans.BlockSetID = victimSetID

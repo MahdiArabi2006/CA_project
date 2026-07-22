@@ -53,6 +53,12 @@ type State struct {
 	Transactions   []transactionState   `json:"transactions"`
 	EvictingList   map[uint64]bool      `json:"evicting_list"`
 
+	// hardware counters
+	StatHitCount       uint64
+	StatMissCount      uint64
+	StatL2ReadTraffic  uint64
+	StatL2WriteTraffic uint64
+
 	// Buffers (transaction indices stored as int)
 	DirStageBuf           queueing.Buffer[int]   `json:"dir_stage_buf"`
 	DirToBankBufs         []queueing.Buffer[int] `json:"dir_to_bank_bufs"`
