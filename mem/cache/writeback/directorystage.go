@@ -660,7 +660,8 @@ func (ds *directoryStage) isWritingFullLine(trans *transactionState, log2BlockSi
 }
 
 func (ds *directoryStage) needEviction(victim *cache.BlockState) bool {
-	return victim.IsValid && victim.IsDirty
+	//return victim.IsValid && victim.IsDirty
+	return victim.IsValid
 }
 
 // startDirPipeline opens a pipeline subtask, parented to the request's req_in

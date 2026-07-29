@@ -61,7 +61,7 @@ func buildEnvironment() (*simulation.Simulation, timing.Engine, *trashingmemacce
 	addressToPortMapper.Port = dram.GetPortByName("Top").AsRemote()
 
 	cacheSpec := writeback.DefaultSpec()
-	cacheSpec.TotalByteSize = 1024
+	cacheSpec.TotalByteSize = 4096
 	cacheSpec.Log2BlockSize = 6
 	// Direct-map cache
 	cacheSpec.WayAssociativity = 1

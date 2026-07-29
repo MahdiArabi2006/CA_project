@@ -80,7 +80,7 @@ func (m *vcMiddleware) handleReadReq(req *memprotocol.ReadReq, topPort messaging
 			},
 			Data: data,
 		}
-
+		m.comp.State.StatHitCount++
 		topPort.Send(rsp)
 		topPort.RetrieveIncoming()
 		m.comp.State.Entries[idx].Valid = false
@@ -104,6 +104,10 @@ func (m *vcMiddleware) handleReadReq(req *memprotocol.ReadReq, topPort messaging
 
 	if bottomPort.CanSend() {
 		bottomPort.Send(forwardReq)
+
+		m.comp.State.StatMissCount++
+		m.comp.State.StatL2ReadTraffic += uint64(m.comp.Spec().BlockSize)
+
 		m.comp.State.PendingReads[forwardReq.ID] = *req
 		topPort.RetrieveIncoming()
 		return true
@@ -180,6 +184,7 @@ func (m *vcMiddleware) handleWriteReq(req *memprotocol.WriteReq, topPort messagi
 			Data:      victimEntry.Data,
 		}
 		bottomPort.Send(wbReq)
+		m.comp.State.StatL2WriteTraffic += uint64(m.comp.Spec().BlockSize)
 	}
 
 	rsp := memprotocol.WriteDoneRsp{
@@ -204,12 +209,24 @@ func (m *vcMiddleware) handleWriteReq(req *memprotocol.WriteReq, topPort messagi
 		blockData[offset+uint64(i)] = req.Data[i]
 	}
 
+	isDirty := false
+	if req.DirtyMask != nil {
+		for _, isByteDirty := range req.DirtyMask {
+			if isByteDirty {
+				isDirty = true
+				break
+			}
+		}
+	} else {
+		isDirty = true 
+	}
+
 	m.comp.State.SeqCount++
 	m.comp.State.Entries[idx] = VCEntry{
 		Tag:       tag,
 		Data:      blockData,
 		Valid:     true,
-		Dirty:     true,
+		Dirty:     isDirty,
 		AccessSeq: m.comp.State.SeqCount,
 	}
 

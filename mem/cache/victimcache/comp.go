@@ -26,6 +26,10 @@ type State struct {
 	Entries  []VCEntry
 	SeqCount uint64 
 	PendingReads map[uint64]memprotocol.ReadReq
+	StatHitCount     uint64
+    StatMissCount    uint64
+    StatL2ReadTraffic  uint64
+    StatL2WriteTraffic uint64
 }
 
 type Resources struct{

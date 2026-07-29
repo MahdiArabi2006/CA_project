@@ -77,7 +77,7 @@ func buildEnvironment() (*simulation.Simulation, timing.Engine, *trashingmemacce
 	l1ToVcMapper.Port = victimCache.GetPortByName("Top").AsRemote()
 
 	cacheSpec := writeback.DefaultSpec()
-	cacheSpec.TotalByteSize = 1024
+	cacheSpec.TotalByteSize = 4096
 	cacheSpec.Log2BlockSize = 6
 	// Direct-map cache
 	cacheSpec.WayAssociativity = 1
@@ -157,7 +157,7 @@ func main() {
 	fmt.Fprintf(os.Stderr, "Seed %d\n", seed)
 	rand.Seed(seed)
 
-	s, engine, agent, cache, _ := buildEnvironment()
+	s, engine, agent, cache, victimcache := buildEnvironment()
 	agent.TickLater()
 
 	err := engine.Run()
@@ -175,11 +175,11 @@ func main() {
 
 	fmt.Println("\n=================== CACHE STATISTICS ===================")
 
-	hits := cache.State.StatHitCount
-	misses := cache.State.StatMissCount
+	hits := cache.State.StatHitCount + victimcache.State.StatHitCount
+	misses := victimcache.State.StatMissCount
 	totalAccesses := hits + misses
-	L2ReadTraffic := cache.State.StatL2ReadTraffic
-	L2WriteTraffic := cache.State.StatL2WriteTraffic
+	L2ReadTraffic := victimcache.State.StatL2ReadTraffic
+	L2WriteTraffic := victimcache.State.StatL2WriteTraffic
 
 	var hitRate, missRate float64
 	if totalAccesses > 0 {
