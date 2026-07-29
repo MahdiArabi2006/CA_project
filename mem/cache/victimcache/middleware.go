@@ -25,10 +25,10 @@ func (m *vcMiddleware) processTopPort() bool {
 	}
 
 	switch req := msg.(type) {
-	case *memprotocol.ReadReq:
-		return m.handleReadReq(req, topPort)
-	case *memprotocol.WriteReq:
-		return m.handleWriteReq(req, topPort)
+	case memprotocol.ReadReq:
+		return m.handleReadReq(&req, topPort)
+	case memprotocol.WriteReq:
+		return m.handleWriteReq(&req, topPort)
 	}
 	return false
 }
@@ -39,6 +39,38 @@ func (m *vcMiddleware) handleReadReq(req *memprotocol.ReadReq, topPort messaging
 
 	// hit in victim cache
 	if idx >= 0 {
+		bottomPort := m.comp.GetPortByName("Bottom")
+
+		if m.comp.State.Entries[idx].Dirty {
+			if !topPort.CanSend() || !bottomPort.CanSend() {
+				return false
+			}
+
+			victimEntry := m.comp.State.Entries[idx]
+			victimAddr := victimEntry.Tag << m.blockOffsetBits()
+			dstPort := m.comp.Resources().AddressToPortMapper.Find(victimAddr)
+
+			wbReq := memprotocol.WriteReq{
+				MsgMeta: messaging.MsgMeta{
+					ID:  timing.GetIDGenerator().Generate(),
+					Src: bottomPort.AsRemote(),
+					Dst: dstPort,
+				},
+				Address:   victimAddr,
+				PID:       req.PID,
+				Data:      victimEntry.Data,
+			}
+			bottomPort.Send(wbReq)
+		} else {
+			if !topPort.CanSend() {
+				return false
+			}
+		}
+
+		offset := req.Address % uint64(m.comp.Spec().BlockSize)
+		dataSize := req.AccessByteSize
+		data := m.comp.State.Entries[idx].Data[offset : offset+uint64(dataSize)]
+
 		rsp := memprotocol.DataReadyRsp{
 			MsgMeta: messaging.MsgMeta{
 				ID:    timing.GetIDGenerator().Generate(),
@@ -46,27 +78,24 @@ func (m *vcMiddleware) handleReadReq(req *memprotocol.ReadReq, topPort messaging
 				Dst:   req.Src,
 				RspTo: req.ID,
 			},
-			Data: m.comp.State.Entries[idx].Data,
+			Data: data,
 		}
 
-		if topPort.CanSend() {
-			topPort.Send(rsp)
-			topPort.RetrieveIncoming()
-			m.comp.State.Entries[idx].Valid = false // remove from vicitm cache
-			return true
-		}
-		return false
+		topPort.Send(rsp)
+		topPort.RetrieveIncoming()
+		m.comp.State.Entries[idx].Valid = false
+		return true
 	}
 
 	// miss in victim cache
 	bottomPort := m.comp.GetPortByName("Bottom")
+	dstPort := m.comp.Resources().AddressToPortMapper.Find(req.Address)
 
-	// new request for L2
-	forwardReq := &memprotocol.ReadReq{
+	forwardReq := memprotocol.ReadReq{
 		MsgMeta: messaging.MsgMeta{
 			ID:  timing.GetIDGenerator().Generate(),
 			Src: bottomPort.AsRemote(),
-			Dst: req.Dst,
+			Dst: dstPort,
 		},
 		Address:        req.Address,
 		AccessByteSize: req.AccessByteSize,
@@ -75,10 +104,7 @@ func (m *vcMiddleware) handleReadReq(req *memprotocol.ReadReq, topPort messaging
 
 	if bottomPort.CanSend() {
 		bottomPort.Send(forwardReq)
-
-		// forward to L1 after response
-		m.comp.State.PendingReads[forwardReq.ID] = req
-
+		m.comp.State.PendingReads[forwardReq.ID] = *req
 		topPort.RetrieveIncoming()
 		return true
 	}
@@ -88,53 +114,100 @@ func (m *vcMiddleware) handleReadReq(req *memprotocol.ReadReq, topPort messaging
 
 func (m *vcMiddleware) handleWriteReq(req *memprotocol.WriteReq, topPort messaging.Port) bool {
 	tag := m.getBlockTag(req.Address)
-	idx, needsWriteBack := m.findVictimLRU()
+	idx := m.lookup(tag)
+	blockSize := m.comp.Spec().BlockSize
 	bottomPort := m.comp.GetPortByName("Bottom")
 
-	// write to vicitm cache in a Dirty entry so we have to send it to L2
-	if needsWriteBack && m.comp.State.Entries[idx].Dirty {
-		victimEntry := m.comp.State.Entries[idx]
-		victimAddr := victimEntry.Tag << m.blockOffsetBits()
+	// Bypass to L2 for partial writes
+	if idx == -1 && len(req.Data) < int(blockSize) {
+		if !bottomPort.CanSend() || !topPort.CanSend() {
+			return false
+		}
 
-		wbReq := &memprotocol.WriteReq{
+		dstPort := m.comp.Resources().AddressToPortMapper.Find(req.Address)
+		forwardReq := memprotocol.WriteReq{
 			MsgMeta: messaging.MsgMeta{
 				ID:  timing.GetIDGenerator().Generate(),
 				Src: bottomPort.AsRemote(),
-				Dst: req.Dst,
+				Dst: dstPort,
 			},
-			Address: victimAddr,
+			Address: req.Address,
 			PID:     req.PID,
-			Data:    victimEntry.Data,
+			Data:    req.Data,
 		}
+		bottomPort.Send(forwardReq)
 
-		if !bottomPort.CanSend() {
-			return false // L2 port is full
+		rsp := memprotocol.WriteDoneRsp{
+			MsgMeta: messaging.MsgMeta{
+				ID:    timing.GetIDGenerator().Generate(),
+				Src:   topPort.AsRemote(),
+				Dst:   req.Src,
+				RspTo: req.ID,
+			},
 		}
-		bottomPort.Send(wbReq)
+		topPort.Send(rsp)
+		topPort.RetrieveIncoming()
+		return true
 	}
 
-	// Write done respone to L1
-
-	rsp := &memprotocol.WriteDoneRsp{
-		MsgMeta: messaging.MsgMeta{
-			ID:    timing.GetIDGenerator().Generate(),
-			Src:   topPort.AsRemote(),
-			Dst:   req.Dst,
-			RspTo: req.ID,
-		},
+	needsWriteBack := false
+	if idx == -1 {
+		idx, needsWriteBack = m.findVictimLRU()
 	}
 
 	if !topPort.CanSend() {
 		return false
 	}
+	if needsWriteBack && m.comp.State.Entries[idx].Dirty {
+		if !bottomPort.CanSend() {
+			return false
+		}
+	}
 
+	if needsWriteBack && m.comp.State.Entries[idx].Dirty {
+		victimEntry := m.comp.State.Entries[idx]
+		victimAddr := victimEntry.Tag << m.blockOffsetBits()
+		dstPort := m.comp.Resources().AddressToPortMapper.Find(victimAddr)
+
+		wbReq := memprotocol.WriteReq{
+			MsgMeta: messaging.MsgMeta{
+				ID:  timing.GetIDGenerator().Generate(),
+				Src: bottomPort.AsRemote(),
+				Dst: dstPort,
+			},
+			Address:   victimAddr,
+			PID:       req.PID,
+			Data:      victimEntry.Data,
+		}
+		bottomPort.Send(wbReq)
+	}
+
+	rsp := memprotocol.WriteDoneRsp{
+		MsgMeta: messaging.MsgMeta{
+			ID:    timing.GetIDGenerator().Generate(),
+			Src:   topPort.AsRemote(),
+			Dst:   req.Src,
+			RspTo: req.ID,
+		},
+	}
 	topPort.Send(rsp)
 
-	// write to vicitm cache (dirty = True) => it will write to memory when LRU chose it
+	var blockData []byte
+	if m.comp.State.Entries[idx].Valid && m.comp.State.Entries[idx].Tag == tag {
+		blockData = m.comp.State.Entries[idx].Data
+	} else {
+		blockData = make([]byte, blockSize)
+	}
+
+	offset := req.Address % uint64(blockSize)
+	for i := 0; i < len(req.Data); i++ {
+		blockData[offset+uint64(i)] = req.Data[i]
+	}
+
 	m.comp.State.SeqCount++
 	m.comp.State.Entries[idx] = VCEntry{
 		Tag:       tag,
-		Data:      req.Data,
+		Data:      blockData,
 		Valid:     true,
 		Dirty:     true,
 		AccessSeq: m.comp.State.SeqCount,
@@ -143,6 +216,7 @@ func (m *vcMiddleware) handleWriteReq(req *memprotocol.WriteReq, topPort messagi
 	topPort.RetrieveIncoming()
 	return true
 }
+
 
 func (m *vcMiddleware) processBottomPort() bool {
 	bottomPort := m.comp.GetPortByName("Bottom")
@@ -154,14 +228,14 @@ func (m *vcMiddleware) processBottomPort() bool {
 	}
 
 	switch rsp := msg.(type) {
-	case *memprotocol.DataReadyRsp:
+	case memprotocol.DataReadyRsp:
 		// finging L1 request
 		origReq, exists := m.comp.State.PendingReads[rsp.RspTo]
 		if !exists {
 			panic("response not found in pending reads!")
 		}
 
-		topRsp := &memprotocol.DataReadyRsp{
+		topRsp := memprotocol.DataReadyRsp{
 			MsgMeta: messaging.MsgMeta{
 				ID:    timing.GetIDGenerator().Generate(),
 				Src:   topPort.AsRemote(),
@@ -177,7 +251,7 @@ func (m *vcMiddleware) processBottomPort() bool {
 			delete(m.comp.State.PendingReads, rsp.RspTo)
 			return true
 		}
-	case *memprotocol.WriteDoneRsp:
+	case memprotocol.WriteDoneRsp:
 		// no need to forward writeback rsp
 		bottomPort.RetrieveIncoming()
 		return true
