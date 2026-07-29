@@ -12,6 +12,7 @@ type Spec struct {
 	NumEntries uint64
 	BlockSize  uint64
 	HitLatency int
+	maxEvictionBufferSize int
 }
 
 type VCEntry struct {
@@ -26,6 +27,7 @@ type State struct {
 	Entries  []VCEntry
 	SeqCount uint64 
 	PendingReads map[uint64]memprotocol.ReadReq
+	EvictionBuffer []memprotocol.WriteReq 
 	StatHitCount     uint64
     StatMissCount    uint64
     StatL2ReadTraffic  uint64

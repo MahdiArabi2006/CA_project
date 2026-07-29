@@ -10,7 +10,8 @@ var defaultSpec = Spec{
 	Freq:       1 * timing.GHz, 
 	NumEntries: 8,              
 	BlockSize:  64,             
-	HitLatency: 1,              
+	HitLatency: 1,
+	maxEvictionBufferSize: 8,           
 }
 
 func DefaultSpec() Spec {
@@ -30,6 +31,7 @@ func MakeBuilder() Builder {
 			NumEntries: 8,
 			BlockSize:  64,
 			HitLatency: 1,
+			maxEvictionBufferSize: 8,
 		},
 	}
 }

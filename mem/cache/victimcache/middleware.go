@@ -12,9 +12,27 @@ type vcMiddleware struct {
 
 func (m *vcMiddleware) Tick() bool {
 	madeProgress := false
+	madeProgress = m.processEvictionBuffer() || madeProgress // Asyc proccess
 	madeProgress = m.processTopPort() || madeProgress
 	madeProgress = m.processBottomPort() || madeProgress
 	return madeProgress
+}
+
+func (m *vcMiddleware) processEvictionBuffer() bool {
+	if len(m.comp.State.EvictionBuffer) == 0 {
+		return false
+	}
+
+	bottomPort := m.comp.GetPortByName("Bottom")
+	if !bottomPort.CanSend() {
+		return false
+	}
+
+	req := m.comp.State.EvictionBuffer[0]
+	bottomPort.Send(req)
+	m.comp.State.EvictionBuffer = m.comp.State.EvictionBuffer[1:]
+
+	return true
 }
 
 func (m *vcMiddleware) processTopPort() bool {
@@ -39,33 +57,32 @@ func (m *vcMiddleware) handleReadReq(req *memprotocol.ReadReq, topPort messaging
 
 	// hit in victim cache
 	if idx >= 0 {
-		bottomPort := m.comp.GetPortByName("Bottom")
+		//bottomPort := m.comp.GetPortByName("Bottom")
 
-		if m.comp.State.Entries[idx].Dirty {
-			if !topPort.CanSend() || !bottomPort.CanSend() {
-				return false
-			}
-
-			victimEntry := m.comp.State.Entries[idx]
-			victimAddr := victimEntry.Tag << m.blockOffsetBits()
-			dstPort := m.comp.Resources().AddressToPortMapper.Find(victimAddr)
-
-			wbReq := memprotocol.WriteReq{
-				MsgMeta: messaging.MsgMeta{
-					ID:  timing.GetIDGenerator().Generate(),
-					Src: bottomPort.AsRemote(),
-					Dst: dstPort,
-				},
-				Address:   victimAddr,
-				PID:       req.PID,
-				Data:      victimEntry.Data,
-			}
-			bottomPort.Send(wbReq)
-		} else {
-			if !topPort.CanSend() {
-				return false
-			}
+		if !topPort.CanSend() {
+			return false
 		}
+
+		// if m.comp.State.Entries[idx].Dirty {
+		// 	victimEntry := m.comp.State.Entries[idx]
+		// 	victimAddr := victimEntry.Tag << m.blockOffsetBits()
+		// 	dstPort := m.comp.Resources().AddressToPortMapper.Find(victimAddr)
+
+		// 	wbReq := memprotocol.WriteReq{
+		// 		MsgMeta: messaging.MsgMeta{
+		// 			ID:  timing.GetIDGenerator().Generate(),
+		// 			Src: bottomPort.AsRemote(),
+		// 			Dst: dstPort,
+		// 		},
+		// 		Address: victimAddr,
+		// 		PID:     req.PID,
+		// 		Data:    victimEntry.Data,
+		// 	}
+		// 	if len(m.comp.State.EvictionBuffer) >= m.comp.Spec().maxEvictionBufferSize {
+		// 		return false
+		// 	}
+		// 	m.comp.State.EvictionBuffer = append(m.comp.State.EvictionBuffer, wbReq)
+		// }
 
 		offset := req.Address % uint64(m.comp.Spec().BlockSize)
 		dataSize := req.AccessByteSize
@@ -162,11 +179,6 @@ func (m *vcMiddleware) handleWriteReq(req *memprotocol.WriteReq, topPort messagi
 	if !topPort.CanSend() {
 		return false
 	}
-	if needsWriteBack && m.comp.State.Entries[idx].Dirty {
-		if !bottomPort.CanSend() {
-			return false
-		}
-	}
 
 	if needsWriteBack && m.comp.State.Entries[idx].Dirty {
 		victimEntry := m.comp.State.Entries[idx]
@@ -179,11 +191,14 @@ func (m *vcMiddleware) handleWriteReq(req *memprotocol.WriteReq, topPort messagi
 				Src: bottomPort.AsRemote(),
 				Dst: dstPort,
 			},
-			Address:   victimAddr,
-			PID:       req.PID,
-			Data:      victimEntry.Data,
+			Address: victimAddr,
+			PID:     req.PID,
+			Data:    victimEntry.Data,
 		}
-		bottomPort.Send(wbReq)
+		if len(m.comp.State.EvictionBuffer) >= m.comp.Spec().maxEvictionBufferSize {
+			return false
+		}
+		m.comp.State.EvictionBuffer = append(m.comp.State.EvictionBuffer, wbReq)
 		m.comp.State.StatL2WriteTraffic += uint64(m.comp.Spec().BlockSize)
 	}
 
@@ -233,7 +248,6 @@ func (m *vcMiddleware) handleWriteReq(req *memprotocol.WriteReq, topPort messagi
 	topPort.RetrieveIncoming()
 	return true
 }
-
 
 func (m *vcMiddleware) processBottomPort() bool {
 	bottomPort := m.comp.GetPortByName("Bottom")
