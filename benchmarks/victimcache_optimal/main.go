@@ -21,7 +21,7 @@ import (
 )
 
 var seedFlag = flag.Int64("seed", 0, "Random Seed")
-var numAccessFlag = flag.Int("num-access", 100000,
+var numAccessFlag = flag.Int("num-access", 10000,
 	"Number of accesses to generate")
 var maxAddressFlag = flag.Uint64("max-address", 1048576, "Address range to use")
 var parallelFlag = flag.Bool("parallel", false, "Test with parallel engine")
@@ -48,7 +48,7 @@ func buildEnvironment() (*simulation.Simulation, timing.Engine, *trashingmemacce
 	agentSpec.MaxAddress = *maxAddressFlag
 	agentSpec.WriteLeft = *numAccessFlag
 	agentSpec.ReadLeft = *numAccessFlag
-	agentSpec.CacheSize = 1024
+	agentSpec.CacheSize = 4096
 	agent := trashingmemaccessagent.MakeBuilder().
 		WithRegistrar(s).
 		WithSpec(agentSpec).

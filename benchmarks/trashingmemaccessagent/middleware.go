@@ -116,20 +116,6 @@ func (m *agentMiddleware) checkReadResult(
 	}
 }
 
-func (m *agentMiddleware) float64() float64 {
-	if m.agent.rng != nil {
-		return m.agent.rng.Float64()
-	}
-	return globalFloat64()
-}
-
-func (m *agentMiddleware) uint64() uint64 {
-	if m.agent.rng != nil {
-		return m.agent.rng.Uint64()
-	}
-	return globalUint64()
-}
-
 func (m *agentMiddleware) uint32r() uint32 {
 	if m.agent.rng != nil {
 		return m.agent.rng.Uint32()
@@ -193,35 +179,15 @@ func (m *agentMiddleware) doRead() bool {
 }
 
 func (m *agentMiddleware) randomReadAddress(state *State) uint64 {
-	// spec := m.agent.Spec()
-
-    // baseAddr := spec.AddressOffset
-    // cacheSize := spec.CacheSize
-
-    // for i := range uint64(4) {
-    //     addrIndex := (state.AccessIndex + i) % 4
-    //     addr := baseAddr + (addrIndex * cacheSize)
-
-    //     if _, written := state.KnownMemValue[addr]; written {
-    //         return addr
-    //     }
-    // }
-
-    // for addr := range state.KnownMemValue {
-    //     return addr
-    // }
-
-    // return baseAddr
-
 	spec := m.agent.Spec()
 	baseAddr := spec.AddressOffset
+	cacheSize := spec.CacheSize
 	
-	blockSize := uint64(64)
-	workingSetBlocks := uint64(32)
+	numConflictingBlocks := uint64(8) // To avoid capacity miss this parameter should be < (L1_Ways)+(VictimCache_blocks)
 
-	for i := range uint64(4) {
-		addrIndex := (state.AccessIndex + i) % workingSetBlocks
-		addr := baseAddr + (addrIndex * blockSize)
+	for i := range numConflictingBlocks {
+		addrIndex := (state.AccessIndex + uint64(i)) % numConflictingBlocks
+		addr := baseAddr + (addrIndex * cacheSize)
 
 		if _, written := state.KnownMemValue[addr]; written {
 			return addr
@@ -263,19 +229,14 @@ func (m *agentMiddleware) doWrite() bool {
 	state := &m.agent.State
 	spec := m.agent.Spec()
 
-	// baseAddr := spec.AddressOffset + 0x0000
-    // cacheSize := spec.CacheSize
-    // addrIndex := state.AccessIndex % 4
-    // address := baseAddr + (addrIndex * cacheSize)
-
 	baseAddr := spec.AddressOffset + 0x0000
-	
-	blockSize := uint64(64)
-	workingSetBlocks := uint64(32) 
-	
-	addrIndex := state.AccessIndex % workingSetBlocks
-	address := baseAddr + (addrIndex * blockSize)
+	cacheSize := spec.CacheSize
 
+	numConflictingBlocks := uint64(8)	// To avoid capacity miss this parameter should be < (L1_Ways)+(VictimCache_blocks)
+
+	addrIndex := state.AccessIndex % numConflictingBlocks
+	address := baseAddr + (addrIndex * cacheSize)
+	
 	data := m.uint32r()
 
 	if m.isAddressInPendingReq(state, address) {

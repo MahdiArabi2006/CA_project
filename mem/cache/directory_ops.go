@@ -24,12 +24,12 @@ import "github.com/sarchlab/akita/v5/mem/vm"
 // the set distribution changes.
 func DirectorySetID(addr uint64, blockSize, numSets int) int {
 	h := addr / uint64(blockSize)
-	h ^= h >> 33
-	h *= 0xff51afd7ed558ccd
-	h ^= h >> 33
-	h *= 0xc4ceb9fe1a85ec53
-	h ^= h >> 33
-
+	// h ^= h >> 33
+	// h *= 0xff51afd7ed558ccd
+	// h ^= h >> 33
+	// h *= 0xc4ceb9fe1a85ec53
+	// h ^= h >> 33
+	// Important note : we change mapping ! (we need conflict miss)
 	return int(h % uint64(numSets))
 }
 
