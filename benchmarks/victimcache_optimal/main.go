@@ -173,28 +173,58 @@ func main() {
 		panic("more requests to send")
 	}
 
-	fmt.Println("\n=================== CACHE STATISTICS ===================")
+	fmt.Println("\n=================== CACHE STATISTICS & AMAT ===================")
 
-	hits := cache.State.StatHitCount + victimcache.State.StatHitCount
-	misses := victimcache.State.StatMissCount
-	totalAccesses := hits + misses
+	l1Hits := cache.State.StatHitCount
+	l1Misses := cache.State.StatMissCount
+	l1Accesses := l1Hits + l1Misses
+
+	vcHits := victimcache.State.StatHitCount
+	vcMisses := victimcache.State.StatMissCount
+	vcAccesses := vcHits + vcMisses
+
 	L2ReadTraffic := victimcache.State.StatL2ReadTraffic
 	L2WriteTraffic := victimcache.State.StatL2WriteTraffic
 
-	var hitRate, missRate float64
-	if totalAccesses > 0 {
-		hitRate = (float64(hits) / float64(totalAccesses)) * 100
-		missRate = (float64(misses) / float64(totalAccesses)) * 100
+	var l1HitRate, l1MissRate float64
+	if l1Accesses > 0 {
+		l1HitRate = float64(l1Hits) / float64(l1Accesses)
+		l1MissRate = float64(l1Misses) / float64(l1Accesses)
 	}
 
-	fmt.Printf("Total Accesses    : %d\n", totalAccesses)
-	fmt.Printf("Total Hits        : %d (%.2f%%)\n", hits, hitRate)
-	fmt.Printf("Total Misses      : %d (%.2f%%)\n", misses, missRate)
-	fmt.Printf("Total L2 Read Traffic    : %d\n", L2ReadTraffic)
-	fmt.Printf("Total L2 Write Traffic    : %d\n", L2WriteTraffic)
+	var vcHitRate, vcMissRate float64
+	if vcAccesses > 0 {
+		vcHitRate = float64(vcHits) / float64(vcAccesses)
+		vcMissRate = float64(vcMisses) / float64(vcAccesses)
+	}
+
+
+	hitTimeL1 := 1.0
+	penaltyVC := 1.0 // Latency of Victim Cache
+	penaltyL2 := 100.0 // Latency of Main Memory/DRAM
+
+	amatWithVC := hitTimeL1 + l1MissRate*(vcHitRate*penaltyVC+vcMissRate*penaltyL2)
+
+	amatBase := hitTimeL1 + l1MissRate*penaltyL2
+
+	fmt.Printf("Total L1 Accesses : %d\n", l1Accesses)
+	fmt.Printf("L1 Hit Rate       : %.2f%%\n", l1HitRate*100)
+	fmt.Printf("L1 Miss Rate      : %.2f%%\n", l1MissRate*100)
 	fmt.Println("--------------------------------------------------------")
-	fmt.Printf("Simulation Time (Cycles) : %.0f cycles\n", float64(engine.CurrentTime()))
+	fmt.Printf("Victim Cache Accesses : %d\n", vcAccesses)
+	fmt.Printf("VC Hit Rate           : %.2f%%\n", vcHitRate*100)
+	fmt.Printf("VC Miss Rate          : %.2f%%\n", vcMissRate*100)
+	fmt.Println("--------------------------------------------------------")
+	fmt.Printf("Total L2 Read Traffic : %d Bytes\n", L2ReadTraffic)
+	fmt.Printf("Total L2 Write Traffic: %d Bytes\n", L2WriteTraffic)
+	fmt.Println("--------------------------------------------------------")
+	fmt.Printf("AMAT (Base - No VC)   : %.2f Cycles\n", amatBase)
+	fmt.Printf("AMAT (With VC)        : %.2f Cycles\n", amatWithVC)
+	fmt.Printf("Performance Improv.   : %.2f%%\n", ((amatBase-amatWithVC)/amatBase)*100)
+	fmt.Println("--------------------------------------------------------")
+	fmt.Printf("Simulation Time       : %.0f cycles\n", float64(engine.CurrentTime()))
 	fmt.Println("========================================================")
 
 	s.Terminate()
 }
+
